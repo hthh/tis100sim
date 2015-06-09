@@ -972,6 +972,10 @@ static int load_user_nodes_filename(const char *filename, struct arena *arena) {
 	struct user_node user_nodes[MAX_USER_NODES];
 	int user_node_count = 0;
 	FILE *f = fopen(filename, "rb");
+	if (!f) {
+		printf("could not open '%s'\n", filename);
+		return 0;
+	}
 	int size = fread(save_data, 1, sizeof save_data - 1, f);
 	save_data[size] = '\0';
 
