@@ -33,6 +33,7 @@
 #define MAX_IN_NODES    4
 #define MAX_OUT_NODES   4
 #define MAX_STACK_NODES 2
+#define MAX_IMAGE_NODES 1
 #define MAX_SAVE_LINES  ((LINES_PER_NODE + 2) * MAX_USER_NODES)
 #define ARENA_WIDTH     4
 #define ARENA_HEIGHT    5
@@ -45,7 +46,9 @@
 
 #define ARRAY_LENGTH(x)   (sizeof(x)/sizeof((x)[0]))
 
-//#define SINGLE_STEP
+//#define SINGLE_STEP		/* display terrible debug output */
+//#define DRAW_IMAGE		/* display image when updated */
+#define OUTPUT_OUT_NODES	/* display output values */
 
 enum opcode_numbers {
 	OP_NONE = 0, OP_NOP, OP_SWP, OP_SAV, OP_NEG, OP_ADD, OP_SUB, OP_JRO,
@@ -63,6 +66,10 @@ enum direction_numbers {
 
 enum write_states {
 	WS_RUNNING, WS_WILL_BE_READABLE, WS_READABLE, WS_WILL_BE_RUNNING,
+};
+
+enum image_states {
+	IS_READ_X, IS_READ_Y, IS_READ_PIXELS,
 };
 
 enum step_stages {
@@ -92,10 +99,10 @@ struct tokens {
 };
 
 struct line {
-	uint8_t opcode;
-	uint8_t sreg;  // R_NONE if immediate
-	uint8_t dreg;
-	uint8_t flags; // unused - intended for breakpoints
+	uint8 opcode;
+	uint8 sreg;  // R_NONE if immediate
+	uint8 dreg;
+	uint8 flags; // unused - intended for breakpoints
 	int immediate; // or jump line number
 };
 
@@ -144,8 +151,11 @@ struct out_node {
 
 struct image_node {
 	struct base_node b;
+	int state;
+	int wrong_pixels;
 	uint8 cursor_x, cursor_y;
 	uint8 display[IMAGE_SIZE];
+	uint8 *solution;
 	struct arena *arena;
 };
 
@@ -158,19 +168,20 @@ struct stack_node {
 // full state
 struct arena {
 	int cycles;
+	int completed;
+	int error;
 
 	int user_node_count;
 	int in_node_count;
 	int out_node_count;
 	int stack_node_count;
-	int completed_out_count;
-	int error;
+	int image_node_count;
 
 	struct in_node in_nodes[MAX_IN_NODES];
 	struct out_node out_nodes[MAX_OUT_NODES];
 	struct user_node user_nodes[MAX_USER_NODES];
 	struct stack_node stack_nodes[MAX_STACK_NODES];
-	struct image_node image_node;
+	struct image_node image_nodes[MAX_IMAGE_NODES];
 
 	struct base_node *nodes[ARENA_SIZE];
 };
@@ -346,8 +357,7 @@ static int parse_line(char *line, struct prelink_line *out) {
 	int opcode_index = 0;
 	char *first = tokens.v[0].s;
 	int len = strlen(first);
-	if (first[len-1] == ':')
-	{
+	if (first[len-1] == ':') {
 		if (len == 1) {
 			printf("parse_line error: empty label is invalid\n");
 			return 0;
@@ -511,14 +521,10 @@ static int link_node(int count, struct prelink_line *line, struct user_node *nod
 	struct line *out = node->lines;
 
 	// very n^2 because n == 15
-	for (int i = 1; i < count; i++)
-	{
-		if (line[i].label[0])
-		{
-			for (int j = 0; j < i; j++)
-			{
-				if (!strcmp(line[i].label, line[j].label))
-				{
+	for (int i = 1; i < count; i++) {
+		if (line[i].label[0]) {
+			for (int j = 0; j < i; j++) {
+				if (!strcmp(line[i].label, line[j].label)) {
 					printf("link_node error: duplicate label '%s'\n", line[i].label);
 					return 0;
 				}
@@ -526,22 +532,17 @@ static int link_node(int count, struct prelink_line *line, struct user_node *nod
 		}
 	}
 
-	for (int i = 0; i < count; i++)
-	{
+	for (int i = 0; i < count; i++) {
 		out[i] = line[i].l;
-		if (line[i].target[0])
-		{
+		if (line[i].target[0]) {
 			out[i].immediate = -1;
-			for (int j = 0; j < count; j++)
-			{
-				if (!strcmp(line[i].target, line[j].label))
-				{
+			for (int j = 0; j < count; j++) {
+				if (!strcmp(line[i].target, line[j].label)) {
 					out[i].immediate = j;
 					break;
 				}
 			}
-			if (out[i].immediate == -1)
-			{
+			if (out[i].immediate == -1) {
 				printf("link_node error: undefined label '%s'\n", line[i].target);
 				return 0;
 			}
@@ -635,9 +636,8 @@ static int user_node_do_read_from_register(struct user_node *n, int reg, int *va
 				*value = 0;
 				return 1;
 			}
-			printf("warning: read from last not implemented\n");
 			*value = 0;
-			return 0;
+			return node_read_from_direction(&n->b, n->last - 1, value);
 		} break;
 
 		case R_UP:
@@ -650,7 +650,7 @@ static int user_node_do_read_from_register(struct user_node *n, int reg, int *va
 			// TODO: this is probably inaccurate
 			for (int i = 0; i < NUM_DIRECTIONS; i++) {
 				if (node_read_from_direction(&n->b, i, value)) {
-					n->last = i+1;
+					n->last = i + 1;
 					return 1;
 				}
 			}
@@ -737,8 +737,7 @@ static void user_node_step(void *node, int step) {
 					for (int i = 0; i > src_value; i--) {
 						old_ip = n->ip;
 						user_node_prev_instruction(n);
-						if (n->ip > old_ip)
-						{
+						if (n->ip > old_ip) {
 							n->ip = old_ip;
 							return;
 						}
@@ -748,8 +747,7 @@ static void user_node_step(void *node, int step) {
 					for (int i = 0; i < src_value; i++) {
 						old_ip = n->ip;
 						user_node_next_instruction(n);
-						if (n->ip < old_ip)
-						{
+						if (n->ip < old_ip) {
 							n->ip = old_ip;
 							return;
 						}
@@ -852,20 +850,96 @@ static void out_node_step(void *node, int step) {
 	if (step == 0 && n->i < n->num_values && node_read_from_direction(&n->b, D_UP, &value)) {
 		expected = n->values[n->i++];
 		if (expected == value) {
-			printf(" ");
 			if (n->i == n->num_values)
-				n->arena->completed_out_count++;
-		} else {
-			printf("X");
+				n->arena->completed++;
+		} else
 			n->arena->error = 1;
-		}
-		printf(" %3d %3d\n", expected, value);
+#ifdef OUTPUT_OUT_NODES
+		printf("%c %3d %3d\n", expected == value ? ' ' : 'X', expected, value);
+#endif
 	}
 }
 
 static void initialise_out_node(struct out_node *node, struct arena *arena) {
 	memset(node, 0, sizeof *node);
 	node->b.step = out_node_step;
+	node->arena = arena;
+}
+
+//
+// OUT NODE
+//
+
+static void image_node_step(void *node, int step) {
+	struct image_node *n = node;
+	int value;
+	int expected;
+
+	if (step == 0 && node_read_from_direction(&n->b, D_UP, &value)) {
+		if (value < 0) {
+			n->state = IS_READ_X;
+			return;
+		}
+
+		switch (n->state) {
+			case IS_READ_X: {
+				n->cursor_x = value;
+				n->state = IS_READ_Y;
+			} break;
+
+			case IS_READ_Y: {
+				n->cursor_y = value;
+				n->state = IS_READ_PIXELS;
+			} break;
+
+			case IS_READ_PIXELS: {
+				if (n->cursor_x < IMAGE_WIDTH && n->cursor_y < IMAGE_HEIGHT && value <= 4) {
+					int i = IMAGE_WIDTH * n->cursor_y + n->cursor_x;
+					if (value != n->display[i]) {
+						if (n->display[i] == n->solution[i]) {
+							// was correct, now incorrect
+							n->wrong_pixels++;
+						}
+
+						n->display[i] = value;
+
+						if (n->display[i] == n->solution[i]) {
+							// now correct
+							n->wrong_pixels--;
+
+							// FIXME: this could increment completed multiple
+							// times if used with another output.
+							if (n->wrong_pixels == 0)
+								n->arena->completed++;
+						}
+					}
+					n->cursor_x++;
+				}
+			} break;
+		}
+
+#ifdef DRAW_IMAGE
+		printf("image:\n");
+		for (int y = 0; y < IMAGE_HEIGHT; y++) {
+			for (int x = 0; x < IMAGE_WIDTH; x++)
+				putchar(" ?!WR"[n->display[IMAGE_WIDTH * y + x]]);
+			putchar('\n');
+		}
+#endif
+	}
+}
+
+static void image_node_set_solution(struct image_node *node, uint8 *solution) {
+	node->solution = solution;
+	node->wrong_pixels = 0;
+	for (int i = 0; i < IMAGE_SIZE; i++)
+		if (solution[i])
+			node->wrong_pixels++;
+}
+
+static void initialise_image_node(struct image_node *node, struct arena *arena) {
+	memset(node, 0, sizeof *node);
+	node->b.step = image_node_step;
 	node->arena = arena;
 }
 
@@ -916,8 +990,7 @@ static void sdump_line(struct line *line, char *p) {
 	*p = '\0';
 	if (line->opcode != OP_NONE) {
 		p += sprintf(p, "%s", get_op_name(line->opcode));
-		if (op_num_arguments(line->opcode))
-		{
+		if (op_num_arguments(line->opcode)) {
 			if (op_operand_is_label(line->opcode))
 				p += sprintf(p, " L%d", line->immediate);
 			else if (line->sreg)
@@ -969,12 +1042,6 @@ static void dump_arena(struct base_node **arena) {
 	}
 }
 
-//
-// MAIN TEST / SIMULATION LOOP
-//
-
-#include "primes.inc"
-
 static int load_user_nodes_filename(const char *filename, struct arena *arena) {
 	char save_data[4096];
 	struct user_node user_nodes[MAX_USER_NODES];
@@ -999,8 +1066,70 @@ static int load_user_nodes_filename(const char *filename, struct arena *arena) {
 	return 1;
 }
 
+static int arena_set_layout(struct arena *arena, int *layout) {
+	int user_node_index = 0;
+	for (int i = 0; i < ARENA_SIZE; i++) {
+		switch (layout[i]) {
+			case N_NONE: break; // NULL value is already placed
+
+			case N_IN: {
+				struct in_node *n = &arena->in_nodes[arena->in_node_count++];
+				initialise_in_node(n);
+				arena->nodes[i] = &n->b;
+			} break;
+
+			case N_OUT: {
+				struct out_node *n = &arena->out_nodes[arena->out_node_count++];
+				initialise_out_node(n, arena);
+				arena->nodes[i] = &n->b;
+			} break;
+
+			case N_USER: {
+				if (user_node_index >= arena->user_node_count) {
+					printf("error: not enough nodes in save file\n");
+					return 0;
+				}
+				struct user_node *n = &arena->user_nodes[user_node_index++];
+
+				// an empty node is equivalent to a "none" node, but much
+				// more expensive to simulate
+				if (!n->empty)
+					arena->nodes[i] = &n->b;
+			} break;
+
+			case N_STACK: {
+				struct stack_node *n = &arena->stack_nodes[arena->stack_node_count++];
+				initialise_stack_node(n);
+				arena->nodes[i] = &n->b;
+			} break;
+
+			case N_IMAGE: {
+				struct image_node *n = &arena->image_nodes[arena->image_node_count++];
+				initialise_image_node(n, arena);
+				arena->nodes[i] = &n->b;
+			} break;
+		}
+	}
+
+	if (user_node_index != arena->user_node_count) {
+		printf("error: too many nodes in save file\n");
+		return 0;
+	}
+
+	return 1;
+}
+
+//
+// MAIN TEST / SIMULATION LOOP
+//
+
+#define USAGE "usage: sim <save file path> [puzzle number]\n\t(primes=60135, scatterplot=52433)\n"
+
 int main(int argc, char **argv) {
-	if (argc != 2) { printf("error: expects 1 filename argument\n"); return 1; }
+	if (argc != 2 && argc != 3) {
+		printf(USAGE);
+		return -1;
+	}
 	struct arena arena;
 	memset(&arena, 0, sizeof arena);
 
@@ -1009,66 +1138,28 @@ int main(int argc, char **argv) {
 		return -1;
 	}
 
-	int user_node_index = 0;
-	for (int i = 0; i < ARENA_SIZE; i++) {
-		switch (test_layout[i]) {
-			case N_NONE: break; // NULL value is already placed
+	int puzzle = -1;
+	if (argc == 3)
+		puzzle = atoi(argv[2]);
 
-			case N_IN: {
-				struct in_node *n = &arena.in_nodes[arena.in_node_count++];
-				initialise_in_node(n);
-				arena.nodes[i] = &n->b;
-			} break;
+	switch (puzzle) {
 
-			case N_OUT: {
-				struct out_node *n = &arena.out_nodes[arena.out_node_count++];
-				initialise_out_node(n, &arena);
-				arena.nodes[i] = &n->b;
-			} break;
+		// hacky includes for puzzles
+#include "primes.inc"
+#include "scatterplot.inc"
 
-			case N_USER: {
-				if (user_node_index >= arena.user_node_count) {
-					printf("error: not enough nodes in save file\n");
-					return -1;
-				}
-				struct user_node *n = &arena.user_nodes[user_node_index++];
-
-				// an empty node is equivalent to a "none" node, but much
-				// more expensive to simulate
-				if (!n->empty)
-					arena.nodes[i] = &n->b;
-			} break;
-
-			case N_STACK: {
-				struct stack_node *n = &arena.stack_nodes[arena.stack_node_count++];
-				initialise_stack_node(n);
-				arena.nodes[i] = &n->b;
-			} break;
-
-			case N_IMAGE: {
-				printf("error: todo: image nodes\n");
-				return -1;
-			} break;
-		}
+		default: {
+			printf(USAGE);
+			return -1;
+		} break;
 	}
-
-	if (user_node_index != arena.user_node_count) {
-		printf("error: too many nodes in save file\n");
-		return -1;
-	}
-
-	arena.in_nodes[0].values = test_input_a;
-	arena.in_nodes[0].num_values = ARRAY_LENGTH(test_input_a);
-	//arena.in_nodes[1].values = test_input_b;
-	//arena.in_nodes[1].num_values = ARRAY_LENGTH(test_input_b);
-	arena.out_nodes[0].values = test_output_a;
-	arena.out_nodes[0].num_values = ARRAY_LENGTH(test_output_a);
 
 	link_arena(arena.nodes);
 
 	// run!
 	int cycle;
-	for (cycle = 0; !arena.error && arena.completed_out_count < arena.out_node_count && cycle < 200000; cycle++) {
+	int required = arena.image_node_count + arena.out_node_count;
+	for (cycle = 0; !arena.error && arena.completed < required && cycle < 200000; cycle++) {
 #ifdef SINGLE_STEP
 		printf("\n%d: \n", cycle);
 		dump_arena(arena.nodes);
@@ -1093,7 +1184,7 @@ int main(int argc, char **argv) {
 
 	if (arena.error) {
 		printf("done: invalid output\n");
-	} else if (arena.completed_out_count == arena.out_node_count) {
+	} else if (arena.completed == required) {
 		int nodes = 0;
 		int instructions = 0;
 		for (int i = 0; i < arena.user_node_count; i++) {
