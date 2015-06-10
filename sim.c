@@ -415,7 +415,13 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 	int num_save_lines = 0;
 	char *p = save_data;
 
+	// trim leading whitespace
+	while (*p == ' ' || *p == '\r' || *p == '\n') p++;
+
 	while (*p) {
+		// trim indentation
+		while (*p == ' ') p++;
+
 		char *e = p;
 		while (*e != '\r' && *e != '\n' && *e != '\0')
 			e++;
