@@ -1,5 +1,6 @@
 // included into a switch statement
 
+case 2:
 case 52433: {
 	// 52433 SCATTER PLOT VIEWER
 	static int scatterplot_layout[ARENA_SIZE] = {

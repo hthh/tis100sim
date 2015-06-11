@@ -146,6 +146,7 @@ struct out_node {
 	int *values;
 	int num_values;
 	int i;
+	const char *output_prefix;
 	struct arena *arena; // to signal completion
 };
 
@@ -699,7 +700,7 @@ static void user_node_step(void *node, int step) {
 		if (n->lines[n->ip].opcode == OP_NONE)
 			user_node_next_instruction(n); // should only happen at start-up
 
-		int src_value;
+		int src_value = 0;
 		struct line *l = &n->lines[n->ip];
 
 		if (op_has_src(l->opcode)) {
@@ -855,6 +856,8 @@ static void out_node_step(void *node, int step) {
 		} else
 			n->arena->error = 1;
 #ifdef OUTPUT_OUT_NODES
+		if (n->output_prefix)
+			printf("%s: ", n->output_prefix);
 		printf("%c %3d %3d\n", expected == value ? ' ' : 'X', expected, value);
 #endif
 	}
@@ -873,7 +876,6 @@ static void initialise_out_node(struct out_node *node, struct arena *arena) {
 static void image_node_step(void *node, int step) {
 	struct image_node *n = node;
 	int value;
-	int expected;
 
 	if (step == 0 && node_read_from_direction(&n->b, D_UP, &value)) {
 		if (value < 0) {
@@ -950,7 +952,6 @@ static void initialise_image_node(struct image_node *node, struct arena *arena) 
 
 static void stack_node_step(void *node, int step) {
 	struct stack_node *n = node;
-	int value;
 
 	if (step == S_COMMIT) {
 		if (n->used) {
@@ -1044,8 +1045,7 @@ static void dump_arena(struct base_node **arena) {
 
 static int load_user_nodes_filename(const char *filename, struct arena *arena) {
 	char save_data[4096];
-	struct user_node user_nodes[MAX_USER_NODES];
-	int user_node_count = 0;
+
 	FILE *f = fopen(filename, "rb");
 	if (!f) {
 		printf("could not open '%s'\n", filename);
@@ -1123,7 +1123,9 @@ static int arena_set_layout(struct arena *arena, int *layout) {
 // MAIN TEST / SIMULATION LOOP
 //
 
-#define USAGE "usage: sim <save file path> [puzzle number]\n\t(primes=60135, scatterplot=52433)\n"
+#include "puzzles/list.inc"
+
+#define USAGE "usage: sim <save file path> [puzzle number]\n" PUZZLE_LIST
 
 int main(int argc, char **argv) {
 	if (argc != 2 && argc != 3) {
@@ -1145,8 +1147,7 @@ int main(int argc, char **argv) {
 	switch (puzzle) {
 
 		// hacky includes for puzzles
-#include "primes.inc"
-#include "scatterplot.inc"
+#include "puzzles/all.inc"
 
 		default: {
 			printf(USAGE);
@@ -1159,7 +1160,7 @@ int main(int argc, char **argv) {
 	// run!
 	int cycle;
 	int required = arena.image_node_count + arena.out_node_count;
-	for (cycle = 0; !arena.error && arena.completed < required && cycle < 200000; cycle++) {
+	for (cycle = 0; !arena.error && arena.completed < required && cycle < TIMEOUT_CYCLES; cycle++) {
 #ifdef SINGLE_STEP
 		printf("\n%d: \n", cycle);
 		dump_arena(arena.nodes);
@@ -1201,4 +1202,4 @@ int main(int argc, char **argv) {
 	}
 
 	return 0;
-};
+}
