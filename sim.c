@@ -1,7 +1,6 @@
 /* TIS-100 simulator - hthh, 2015
 
-	Work in progress. Currently runs many of my programs accurately, but no
-	implementation of the image module.
+	Work in progress. Seems to run most programs accurately at the moment.
 
 	Intended to be 100% compatible. This is intended as a fast cycle counter
 	to augment the TIS-100 game, and make it easier to experiment with
@@ -46,9 +45,9 @@
 
 #define ARRAY_LENGTH(x)   (sizeof(x)/sizeof((x)[0]))
 
-//#define SINGLE_STEP		/* display terrible debug output */
-//#define DRAW_IMAGE		/* display image when updated */
-#define OUTPUT_OUT_NODES	/* display output values */
+//#define SINGLE_STEP     /* display terrible debug output */
+//#define DRAW_IMAGE      /* display image when updated */
+#define OUTPUT_OUT_NODES  /* display output values */
 
 enum opcode_numbers {
 	OP_NONE = 0, OP_NOP, OP_SWP, OP_SAV, OP_NEG, OP_ADD, OP_SUB, OP_JRO,

@@ -2,7 +2,7 @@
 
 case 3: {
 	// UNKNOWN (SECRET PUZZLE)
-	static int primes_layout[ARENA_SIZE] = {
+	static int secret_layout[ARENA_SIZE] = {
 		N_NONE,  N_IN,    N_NONE,  N_NONE,
 		N_USER,  N_USER,  N_USER,  N_NONE,
 		N_USER,  N_USER,  N_USER,  N_NONE,
@@ -14,7 +14,7 @@ case 3: {
 	static int secret_output_a[] = {3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 0, 0, 0, 0, 1, 1, 1, 1, 3, 3, 0, 0, 0, 0, 2, 2, -1};
 	static int secret_output_b[] = {4, 3, 6, 2, 6, 1, 4, 2, 2, 3, 4, 0, 4, 1, 2, 3, 4, 0, 2, 2};
 
-	if (!arena_set_layout(&arena, primes_layout))
+	if (!arena_set_layout(&arena, secret_layout))
 		return -1;
 
 	arena.in_nodes[0].values = secret_input_a;
