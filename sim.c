@@ -467,10 +467,11 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 	struct prelink_line node_lines[LINES_PER_NODE];
 	int node_line = 0;
 	int node = 0;
+	int n;
 
 	memset(user_nodes, 0, MAX_USER_NODES * sizeof *user_nodes);
 
-	for (int n = 1; n < num_save_lines; n++) {
+	for (n = 1; n < num_save_lines; n++) {
 		if (lines[n][0] == '@') {
 			// TODO: check the number is as expected
 			if (!link_node(node_line, node_lines, &user_nodes[node])) {
@@ -519,11 +520,12 @@ static void user_node_step(void *node, int step);
 static int link_node(int count, struct prelink_line *line, struct user_node *node)
 {
 	struct line *out = node->lines;
+	int i, j;
 
 	// very n^2 because n == 15
-	for (int i = 1; i < count; i++) {
+	for (i = 1; i < count; i++) {
 		if (line[i].label[0]) {
-			for (int j = 0; j < i; j++) {
+			for (j = 0; j < i; j++) {
 				if (!strcmp(line[i].label, line[j].label)) {
 					printf("link_node error: duplicate label '%s'\n", line[i].label);
 					return 0;
@@ -532,11 +534,11 @@ static int link_node(int count, struct prelink_line *line, struct user_node *nod
 		}
 	}
 
-	for (int i = 0; i < count; i++) {
+	for (i = 0; i < count; i++) {
 		out[i] = line[i].l;
 		if (line[i].target[0]) {
 			out[i].immediate = -1;
-			for (int j = 0; j < count; j++) {
+			for (j = 0; j < count; j++) {
 				if (!strcmp(line[i].target, line[j].label)) {
 					out[i].immediate = j;
 					break;
@@ -550,7 +552,7 @@ static int link_node(int count, struct prelink_line *line, struct user_node *nod
 	}
 
 	node->empty = 1;
-	for (int i = 0; i < count; i++) {
+	for (i = 0; i < count; i++) {
 		if (out[i].opcode) {
 			node->ip = i;
 			node->empty = 0;
@@ -568,8 +570,9 @@ static int link_node(int count, struct prelink_line *line, struct user_node *nod
 // initialise the arena - sets node neighbours and x/y
 
 static void link_arena(struct base_node **arena) {
-	for (int y = 0; y < ARENA_HEIGHT; y++) {
-		for (int x = 0; x < ARENA_WIDTH; x++) {
+	int x, y;
+	for (y = 0; y < ARENA_HEIGHT; y++) {
+		for (x = 0; x < ARENA_WIDTH; x++) {
 			struct base_node *this = arena[ARENA_I(x, y)];
 			if (!this)
 				continue;
@@ -648,7 +651,8 @@ static int user_node_do_read_from_register(struct user_node *n, int reg, int *va
 
 		case R_ANY: {
 			// TODO: this is probably inaccurate
-			for (int i = 0; i < NUM_DIRECTIONS; i++) {
+			int i;
+			for (i = 0; i < NUM_DIRECTIONS; i++) {
 				if (node_read_from_direction(&n->b, i, value)) {
 					n->last = i + 1;
 					return 1;
@@ -731,10 +735,10 @@ static void user_node_step(void *node, int step) {
 			case OP_JLZ: branch = (n->acc  < 0); break;
 
 			case OP_JRO: {
-				int old_ip;
+				int old_ip, i;
 				// emulate weird bounding behaviour
 				if (src_value < 0) {
-					for (int i = 0; i > src_value; i--) {
+					for (i = 0; i > src_value; i--) {
 						old_ip = n->ip;
 						user_node_prev_instruction(n);
 						if (n->ip > old_ip) {
@@ -742,9 +746,8 @@ static void user_node_step(void *node, int step) {
 							return;
 						}
 					}
-					return;
 				} else {
-					for (int i = 0; i < src_value; i++) {
+					for (i = 0; i < src_value; i++) {
 						old_ip = n->ip;
 						user_node_next_instruction(n);
 						if (n->ip < old_ip) {
@@ -920,9 +923,10 @@ static void image_node_step(void *node, int step) {
 		}
 
 #ifdef DRAW_IMAGE
+		int x, y;
 		printf("image:\n");
-		for (int y = 0; y < IMAGE_HEIGHT; y++) {
-			for (int x = 0; x < IMAGE_WIDTH; x++)
+		for (y = 0; y < IMAGE_HEIGHT; y++) {
+			for (x = 0; x < IMAGE_WIDTH; x++)
 				putchar(" ?!WR"[n->display[IMAGE_WIDTH * y + x]]);
 			putchar('\n');
 		}
@@ -931,9 +935,10 @@ static void image_node_step(void *node, int step) {
 }
 
 static void image_node_set_solution(struct image_node *node, uint8 *solution) {
+	int i;
 	node->solution = solution;
 	node->wrong_pixels = 0;
-	for (int i = 0; i < IMAGE_SIZE; i++)
+	for (i = 0; i < IMAGE_SIZE; i++)
 		if (solution[i])
 			node->wrong_pixels++;
 }
@@ -966,13 +971,14 @@ static void stack_node_step(void *node, int step) {
 // runs between S_RUN and S_COMMIT :/
 static void stack_node_read(struct stack_node *n) {
 	int value;
+	int d;
 
 	if (n->b.write_state == WS_WILL_BE_RUNNING) {
 		assert(n->used > 0);
 		n->values[--n->used] = 0;
 	}
 
-	for (int d = 0; n->used < STACK_NODE_SIZE && d < NUM_DIRECTIONS; d++)
+	for (d = 0; n->used < STACK_NODE_SIZE && d < NUM_DIRECTIONS; d++)
 		if (node_read_from_direction(&n->b, d, &value))
 			n->values[n->used++] = value;
 }
@@ -1006,11 +1012,12 @@ static void sdump_line(struct line *line, char *p) {
 
 static void dump_arena(struct base_node **arena) {
 #define DASHES "+-----------------------------------------------------------------------------------+"
+	int x, y, i;
 	puts(DASHES);
-	for (int y = 1; y < 4; y++) {
-		for (int i = -1; i < LINES_PER_NODE; i++) {
+	for (y = 1; y < 4; y++) {
+		for (i = -1; i < LINES_PER_NODE; i++) {
 			printf("|");
-			for (int x = 0; x < 4; x++) {
+			for (x = 0; x < 4; x++) {
 				struct base_node *n = arena[ARENA_I(x,y)];
 				const char *v = "";
 				char buffer[64];
@@ -1067,7 +1074,8 @@ static int load_user_nodes_filename(const char *filename, struct arena *arena) {
 
 static int arena_set_layout(struct arena *arena, int *layout) {
 	int user_node_index = 0;
-	for (int i = 0; i < ARENA_SIZE; i++) {
+	int i;
+	for (i = 0; i < ARENA_SIZE; i++) {
 		switch (layout[i]) {
 			case N_NONE: break; // NULL value is already placed
 
@@ -1085,7 +1093,7 @@ static int arena_set_layout(struct arena *arena, int *layout) {
 
 			case N_USER: {
 				if (user_node_index >= arena->user_node_count) {
-					printf("error: not enough nodes in save file\n");
+					printf("error: not enough nodes in save file (found %d)\n", arena->user_node_count);
 					return 0;
 				}
 				struct user_node *n = &arena->user_nodes[user_node_index++];
@@ -1157,7 +1165,7 @@ int main(int argc, char **argv) {
 	link_arena(arena.nodes);
 
 	// run!
-	int cycle;
+	int cycle, i, j;
 	int required = arena.image_node_count + arena.out_node_count;
 	for (cycle = 0; !arena.error && arena.completed < required && cycle < TIMEOUT_CYCLES; cycle++) {
 #ifdef SINGLE_STEP
@@ -1168,16 +1176,16 @@ int main(int argc, char **argv) {
 #endif
 
 		// simulate all nodes
-		for (int i = 0; i < ARENA_SIZE; i++)
+		for (i = 0; i < ARENA_SIZE; i++)
 			if (arena.nodes[i])
 				arena.nodes[i]->step(arena.nodes[i], S_RUN);
 
 		// do any stack node reads
-		for (int i = 0; i < arena.stack_node_count; i++)
+		for (i = 0; i < arena.stack_node_count; i++)
 			stack_node_read(&arena.stack_nodes[i]);
 
 		// commit any externally visible changes
-		for (int i = 0; i < ARENA_SIZE; i++)
+		for (i = 0; i < ARENA_SIZE; i++)
 			if (arena.nodes[i])
 				arena.nodes[i]->step(arena.nodes[i], S_COMMIT);
 	}
@@ -1187,10 +1195,10 @@ int main(int argc, char **argv) {
 	} else if (arena.completed == required) {
 		int nodes = 0;
 		int instructions = 0;
-		for (int i = 0; i < arena.user_node_count; i++) {
+		for (i = 0; i < arena.user_node_count; i++) {
 			if (!arena.user_nodes[i].empty) {
 				nodes++;
-				for (int j = 0; j < LINES_PER_NODE; j++)
+				for (j = 0; j < LINES_PER_NODE; j++)
 					if (arena.user_nodes[i].lines[j].opcode != OP_NONE)
 						instructions++;
 			}
