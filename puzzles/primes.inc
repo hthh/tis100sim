@@ -1,6 +1,5 @@
 // included into a switch statement
 
-case -1: // default
 case 1:
 case 60135: {
 	// 60135 PRIME DETECTOR

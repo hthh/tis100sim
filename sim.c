@@ -22,7 +22,7 @@
 #include <stdlib.h>
 #include <assert.h>
 
-#define TIMEOUT_CYCLES 200000
+#define TIMEOUT_CYCLES  200000
 
 #define LINES_PER_NODE  15
 #define STACK_NODE_SIZE 15
@@ -88,20 +88,17 @@ enum node_types {
 typedef unsigned char uint8;
 typedef void (*step_func)(void *node, int stage);
 
-struct token {
-	char s[LINE_LENGTH+1];
-};
+typedef char token[LINE_LENGTH+1];
 
 struct tokens {
 	int num;
-	struct token v[TOKENS_PER_LINE];
+	token v[TOKENS_PER_LINE];
 };
 
 struct line {
 	uint8 opcode;
 	uint8 sreg;  // R_NONE if immediate
 	uint8 dreg;
-	uint8 flags; // unused - intended for breakpoints
 	int immediate; // or jump line number
 };
 
@@ -303,14 +300,13 @@ static int is_tis100_terminator(char c) {
 }
 
 
-// tokenisin
+// tokenizing
 
 static int tokenize_line(char *line, struct tokens *t) {
 	char *p = line;
 	char *o;
 
-	if (strlen(line) > LINE_LENGTH)
-		return 0;
+	assert(strlen(line) <= LINE_LENGTH);
 
 	t->num = 0;
 
@@ -322,15 +318,17 @@ static int tokenize_line(char *line, struct tokens *t) {
 		if (is_tis100_terminator(*p))
 			return 1;
 
-		if (t->num >= TOKENS_PER_LINE)
+		if (t->num >= TOKENS_PER_LINE) {
+			printf("error: too many tokens to parse line\n");
 			return 0;
+		}
 
-		o = t->v[t->num++].s;
+		o = t->v[t->num++];
 		while (!is_tis100_terminator(*p) && !is_tis100_separator(*p)) {
 			char c = *p;
 			*o++ = c;
 			p++;
-			if (c == ':') // TODO: && t->num == 1
+			if (c == ':' && t->num == 1)
 				break;
 		}
 		*o++ = '\0';
@@ -344,10 +342,8 @@ static int tokenize_line(char *line, struct tokens *t) {
 
 static int parse_line(char *line, struct prelink_line *out) {
 	struct tokens tokens;
-	if (!tokenize_line(line, &tokens)) {
-		printf("parse_line error: tokenize_line failed\n");
+	if (!tokenize_line(line, &tokens))
 		return 0;
-	}
 
 	memset(out, 0, sizeof *out);
 
@@ -355,11 +351,11 @@ static int parse_line(char *line, struct prelink_line *out) {
 		return 1; // successful parse
 
 	int opcode_index = 0;
-	char *first = tokens.v[0].s;
+	char *first = tokens.v[0];
 	int len = strlen(first);
 	if (first[len-1] == ':') {
 		if (len == 1) {
-			printf("parse_line error: empty label is invalid\n");
+			printf("error: empty label is invalid\n");
 			return 0;
 		}
 		
@@ -369,44 +365,44 @@ static int parse_line(char *line, struct prelink_line *out) {
 	}
 
 	if (opcode_index < tokens.num) {
-		char *op = tokens.v[opcode_index].s;
+		char *op = tokens.v[opcode_index];
 		out->l.opcode = parse_opcode(op);
 		if (!out->l.opcode) {
-			printf("parse_line error: invalid opcode (%s)\n", op);
+			printf("error: invalid opcode '%s'\n", op);
 			return 0;
 		}
 
 		int operands_index = opcode_index + 1;
 		int num_operands = op_num_arguments(out->l.opcode);
 		if (num_operands != tokens.num - operands_index) {
-			printf("parse_line error: wrong number of operands\n");
+			printf("error: wrong number of operands for '%s'\n", op);
 			return 0;
 		}
 
 		if (num_operands) {
 			if (op_operand_is_label(out->l.opcode)) {
-				strcpy(out->target, tokens.v[operands_index].s);
+				strcpy(out->target, tokens.v[operands_index]);
 			} else {
 				// validate src
-				char *src = tokens.v[operands_index].s;
+				char *src = tokens.v[operands_index];
 				int sreg = parse_register(src);
 				out->l.sreg = sreg;
 				if (sreg == R_NONE) {
 					char *e = NULL;
 					long long v = strtoll(src, &e, 10);
 					if (*src == '+' || *e || v < INT_MIN || v > INT_MAX) {
-						printf("parse_line error: invalid operand\n");
+						printf("error: invalid operand '%s'\n", src);
 						return 0;
 					}
 					out->l.immediate = tis100_clamp(v);
 				}
 
 				if (num_operands == 2) {
-					char *dst = tokens.v[operands_index+1].s;
+					char *dst = tokens.v[operands_index+1];
 					int dreg = parse_register(dst);
 					out->l.dreg = dreg;
 					if (dreg == R_NONE) {
-						printf("parse_line error: invalid destination\n");
+						printf("error: invalid register '%s'\n", dst);
 						return 0;
 					}
 				}
@@ -440,12 +436,12 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 
 		int l = e - p;
 		if (l > LINE_LENGTH) {
-			printf("load_nodes error: line too long\n");
+			printf("error: invalid save file: line too long\n");
 			return 0;
 		}
 
 		if (num_save_lines >= MAX_SAVE_LINES) {
-			printf("load_nodes error: too many lines\n");
+			printf("error: invalid save file: too many lines\n");
 			return 0;
 		}
 
@@ -460,7 +456,7 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 	}
 
 	if (num_save_lines == 0 || strcmp(lines[0], "@0")) {
-		printf("load_nodes error: not a save file (expected '@0')\n");
+		printf("error: invalid save file: should start with '@0'\n");
 		return 0;
 	}
 
@@ -474,14 +470,12 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 	for (n = 1; n < num_save_lines; n++) {
 		if (lines[n][0] == '@') {
 			// TODO: check the number is as expected
-			if (!link_node(node_line, node_lines, &user_nodes[node])) {
-				printf("load_nodes error: link_node failed\n");
-				return 0;	
-			}
+			if (!link_node(node_line, node_lines, &user_nodes[node]))
+				return 0;
 			node++;
 			node_line = 0;
 			if (node >= MAX_USER_NODES) {
-				printf("load_nodes error: too many nodes\n");
+				printf("error: invalid save file: too many nodes\n");
 				return 0;
 			}
 			continue;
@@ -490,20 +484,16 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 		if (node_line >= LINES_PER_NODE) {
 			if (!lines[n][0])
 				continue;
-			printf("load_nodes error: too many lines\n");
+			printf("error: invalid save file: too many lines in node\n");
 			return 0;
 		}
 
-		if (!parse_line(lines[n], &node_lines[node_line++])) {
-			printf("load_nodes error: parse_line failed\n");
+		if (!parse_line(lines[n], &node_lines[node_line++]))
 			return 0;
-		}
 	}
 
-	if (!link_node(node_line, node_lines, &user_nodes[node])) {
-		printf("load_nodes error: link_node failed\n");
-		return 0;	
-	}
+	if (!link_node(node_line, node_lines, &user_nodes[node]))
+		return 0;
 	node++;
 
 	*count = node;
@@ -513,12 +503,11 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 
 
 
-// link labels and initialise user nodes
+// link labels and initialize user nodes
 
 static void user_node_step(void *node, int step);
 
-static int link_node(int count, struct prelink_line *line, struct user_node *node)
-{
+static int link_node(int count, struct prelink_line *line, struct user_node *node) {
 	struct line *out = node->lines;
 	int i, j;
 
@@ -527,7 +516,7 @@ static int link_node(int count, struct prelink_line *line, struct user_node *nod
 		if (line[i].label[0]) {
 			for (j = 0; j < i; j++) {
 				if (!strcmp(line[i].label, line[j].label)) {
-					printf("link_node error: duplicate label '%s'\n", line[i].label);
+					printf("error: duplicate label '%s'\n", line[i].label);
 					return 0;
 				}
 			}
@@ -545,7 +534,7 @@ static int link_node(int count, struct prelink_line *line, struct user_node *nod
 				}
 			}
 			if (out[i].immediate == -1) {
-				printf("link_node error: undefined label '%s'\n", line[i].target);
+				printf("error: undefined label '%s'\n", line[i].target);
 				return 0;
 			}
 		}
@@ -567,7 +556,7 @@ static int link_node(int count, struct prelink_line *line, struct user_node *nod
 
 
 
-// initialise the arena - sets node neighbours and x/y
+// initialize the arena - sets node neighbours and x/y
 
 static void link_arena(struct base_node **arena) {
 	int x, y;
@@ -621,8 +610,7 @@ static int node_read_from_direction(struct base_node *n, int direction, int *val
 	return 0;
 }
 
-static int user_node_do_read_from_register(struct user_node *n, int reg, int *value)
-{
+static int user_node_do_read_from_register(struct user_node *n, int reg, int *value) {
 	switch (reg) {
 		case R_NIL: {
 			*value = 0;
@@ -795,9 +783,7 @@ static void user_node_step(void *node, int step) {
 				}
 			} break;
 
-			default: {
-				printf("warning: unimplemented op %s\n", get_op_name(l->opcode));
-			} break;
+			default: assert(0);
 		}
 
 		// JRO deals with it's own problems
@@ -1054,20 +1040,18 @@ static int load_user_nodes_filename(const char *filename, struct arena *arena) {
 
 	FILE *f = fopen(filename, "rb");
 	if (!f) {
-		printf("could not open '%s'\n", filename);
+		printf("error: could not open save file '%s'\n", filename);
 		return 0;
 	}
 	int size = fread(save_data, 1, sizeof save_data - 1, f);
 	save_data[size] = '\0';
 
 	if (size == sizeof save_data - 1) {
-		printf("save data too large\n");
+		printf("error: invalid save file: too large\n");
 		return 0;
 	}
-	if (!load_user_nodes(save_data, arena->user_nodes, &arena->user_node_count)) {
-		printf("load_user_nodes failed\n");
+	if (!load_user_nodes(save_data, arena->user_nodes, &arena->user_node_count))
 		return 0;
-	}
 
 	return 1;
 }
@@ -1093,7 +1077,7 @@ static int arena_set_layout(struct arena *arena, int *layout) {
 
 			case N_USER: {
 				if (user_node_index >= arena->user_node_count) {
-					printf("error: not enough nodes in save file (found %d)\n", arena->user_node_count);
+					printf("error: not enough nodes in save file\n");
 					return 0;
 				}
 				struct user_node *n = &arena->user_nodes[user_node_index++];
@@ -1139,17 +1123,25 @@ int main(int argc, char **argv) {
 		printf(USAGE);
 		return -1;
 	}
+	char *path = argv[1];
 	struct arena arena;
 	memset(&arena, 0, sizeof arena);
 
-	if (!load_user_nodes_filename(argv[1], &arena)) {
-		printf("error: could not load save file\n");
+	if (!load_user_nodes_filename(path, &arena))
 		return -1;
-	}
 
 	int puzzle = -1;
 	if (argc == 3)
 		puzzle = atoi(argv[2]);
+	else {
+		char *last = path + strlen(path);
+		while (last > path && last[-1] != '/' && last[-1] != '\\')
+			last--;
+		if (!strncmp("UNKNOWN", last, 7))
+			puzzle = 3;
+		else if (*last >= '0' && *last <= '9')
+			puzzle = atoi(last);
+	}
 
 	switch (puzzle) {
 
