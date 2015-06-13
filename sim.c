@@ -559,34 +559,24 @@ static void link_arena(struct base_node **arena) {
 	}
 }
 
-static int node_consume(struct base_node *n, int direction, int *value) {
-	if (n->write_state != WS_READABLE || !(n->write_bits & (1 << direction))) {
-		*value = 0;
-		return 0;
-	}
+static int node_read_from_direction(struct base_node *n, int direction, int *value) {
+	struct base_node *other = n->neighbors[direction];
 
-	*value = n->write_value;
-	n->write_state = WS_WILL_BE_RUNNING;
+	if (!other || other->write_state != WS_READABLE ||
+	    (other->write_bits & (1 << direction_opposite(direction))) == 0)
+		return 0;
+
+	*value = other->write_value;
+	other->write_state = WS_WILL_BE_RUNNING;
 	return 1;
 }
 
-static int node_read_from_direction(struct base_node *n, int direction, int *value) {
-	struct base_node *other = n->neighbors[direction];
-	if (other)
-		return node_consume(other, direction_opposite(direction), value);
-	*value = 0;
-	return 0;
-}
 
-
-//
-// USER NODE
-//
+// user node
 
 static int user_node_do_read_from_register(struct user_node *n, int reg, int *value) {
 	switch (reg) {
 		case R_NIL:
-			*value = 0;
 			return 1;
 
 		case R_ACC:
@@ -594,11 +584,8 @@ static int user_node_do_read_from_register(struct user_node *n, int reg, int *va
 			return 1;
 
 		case R_LAST:
-			if (!n->last) {
-				*value = 0;
+			if (!n->last)
 				return 1;
-			}
-			*value = 0;
 			return node_read_from_direction(&n->b, n->last - 1, value);
 
 		case R_UP:
@@ -620,7 +607,6 @@ static int user_node_do_read_from_register(struct user_node *n, int reg, int *va
 		}
 	}
 
-	*value = 0;
 	return 0;
 }
 
@@ -765,9 +751,8 @@ static void user_node_step(struct user_node *n, int step) {
 	}
 }
 
-//
-// IN NODE
-//
+
+// in node
 
 static void in_node_step(struct in_node *n, int step) {
 	if (step == S_COMMIT) {
@@ -786,13 +771,10 @@ static void in_node_step(struct in_node *n, int step) {
 }
 
 
-//
-// OUT NODE
-//
+// out node
 
 static void out_node_step(struct out_node *n, int step) {
-	int value;
-	int expected;
+	int value = 0, expected;
 
 	if (step == S_RUN && n->i < n->num_values && node_read_from_direction(&n->b, D_UP, &value)) {
 		expected = n->values[n->i++];
@@ -810,12 +792,10 @@ static void out_node_step(struct out_node *n, int step) {
 }
 
 
-//
-// IMAGE NODE
-//
+// image node
 
 static void image_node_step(struct image_node *n, int step) {
-	int value;
+	int value = 0;
 
 	if (step == S_RUN && node_read_from_direction(&n->b, D_UP, &value)) {
 		if (value < 0 && n->state != IS_COMPLETED) {
@@ -876,13 +856,11 @@ static void image_node_set_solution(struct image_node *node, uint8 *solution) {
 }
 
 
-//
-// STACK NODE
-//
+// stack node
 
 static void stack_node_step(struct stack_node *n, int step) {
 	if (step == S_RUN) {
-		int value, d;
+		int value = 0, d;
 
 		if (n->b.write_state == WS_WILL_BE_RUNNING) {
 			assert(n->used > 0);
@@ -904,9 +882,7 @@ static void stack_node_step(struct stack_node *n, int step) {
 }
 
 
-//
-// DEBUG OUTPUT FUNCTIONS
-//
+// debug output functions
 
 static void sdump_line(struct line *line, char *p) {
 	*p = '\0';
@@ -964,6 +940,9 @@ static void dump_arena(struct base_node **arena) {
 		puts(DASHES);
 	}
 }
+
+
+// loading functions
 
 static int load_user_nodes_filename(const char *filename, struct arena *arena) {
 	char save_data[4096];
@@ -1041,9 +1020,8 @@ static int arena_set_layout(struct arena *arena, int *layout) {
 	return 1;
 }
 
-//
-// MAIN TEST / SIMULATION LOOP
-//
+
+// main test / simulation loop
 
 #include "puzzles/list.inc"
 
