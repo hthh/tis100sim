@@ -4,7 +4,7 @@
 
 	Intended to be 100% compatible. This is intended as a fast cycle counter
 	to augment the TIS-100 game, and make it easier to experiment with
-	optimizations, or automate solution verifification. It is not intended as
+	optimizations, or automate solution verification. It is not intended as
 	a game.
 
 	Define "SINGLE_STEP" for some terrible debug output.
