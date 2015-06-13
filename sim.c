@@ -72,7 +72,7 @@ enum image_states {
 };
 
 enum step_stages {
-	S_RUN, S_COMMIT
+	S_RUN, S_COMMIT,
 };
 
 enum node_types {
@@ -155,9 +155,8 @@ struct stack_node {
 
 // full state
 struct arena {
-	int cycles;
-	int completed;
-	int error;
+	int completed;  // number of completed (correct) output nodes
+	int error;      // flag indicating incorrect output
 
 	int user_node_count;
 	int in_node_count;
@@ -316,10 +315,8 @@ static int tokenize_line(char *line, struct tokens *t) {
 
 		o = t->v[t->num++];
 		while (!is_tis100_terminator(*p) && !is_tis100_separator(*p)) {
-			char c = *p;
-			*o++ = c;
-			p++;
-			if (c == ':' && t->num == 1)
+			*o++ = *p;
+			if (*p++ == ':' && t->num == 1)
 				break;
 		}
 		*o++ = '\0';
@@ -341,7 +338,7 @@ static int parse_line(char *line, struct prelink_line *out) {
 	if (tokens.num == 0)
 		return 1; // successful parse
 
-	int opcode_index = 0;
+	int token_index = 0;
 	char *first = tokens.v[0];
 	int len = strlen(first);
 	if (first[len-1] == ':') {
@@ -352,33 +349,31 @@ static int parse_line(char *line, struct prelink_line *out) {
 		
 		first[len-1] = '\0';
 		strcpy(out->label, first);
-		opcode_index = 1;
+		token_index = 1;
 	}
 
-	if (opcode_index < tokens.num) {
-		char *op = tokens.v[opcode_index];
+	if (token_index < tokens.num) {
+		char *op = tokens.v[token_index++];
 		out->l.opcode = parse_opcode(op);
 		if (!out->l.opcode) {
 			printf("error: invalid opcode '%s'\n", op);
 			return 0;
 		}
 
-		int operands_index = opcode_index + 1;
 		int num_operands = op_num_arguments(out->l.opcode);
-		if (num_operands != tokens.num - operands_index) {
-			printf("error: wrong number of operands for '%s'\n", op);
+		if (num_operands != tokens.num - token_index) {
+			printf("error: '%s' expects %d operands\n", op, num_operands);
 			return 0;
 		}
 
 		if (num_operands) {
 			if (op_operand_is_label(out->l.opcode)) {
-				strcpy(out->target, tokens.v[operands_index]);
+				strcpy(out->target, tokens.v[token_index]);
 			} else {
 				// validate src
-				char *src = tokens.v[operands_index];
-				int sreg = parse_register(src);
-				out->l.sreg = sreg;
-				if (sreg == R_NONE) {
+				char *src = tokens.v[token_index++];
+				out->l.sreg = parse_register(src);
+				if (out->l.sreg == R_NONE) {
 					char *e = NULL;
 					long long v = strtoll(src, &e, 10);
 					if (*src == '+' || *e || v < INT_MIN || v > INT_MAX) {
@@ -389,10 +384,9 @@ static int parse_line(char *line, struct prelink_line *out) {
 				}
 
 				if (num_operands == 2) {
-					char *dst = tokens.v[operands_index+1];
-					int dreg = parse_register(dst);
-					out->l.dreg = dreg;
-					if (dreg == R_NONE) {
+					char *dst = tokens.v[token_index];
+					out->l.dreg = parse_register(dst);
+					if (out->l.dreg == R_NONE) {
 						printf("error: invalid register '%s'\n", dst);
 						return 0;
 					}
@@ -459,7 +453,7 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 	char *p = save_data;
 
 	// trim leading whitespace
-	while (*p == ' ' || *p == '\r' || *p == '\n' || *p == '\t')
+	while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
 		p++;
 
 	while (*p) {
@@ -498,9 +492,7 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 	}
 
 	struct prelink_line node_lines[LINES_PER_NODE];
-	int node_line = 0;
-	int node = 0;
-	int n;
+	int n, node_line = 0, node = 0;
 
 	memset(user_nodes, 0, MAX_USER_NODES * sizeof *user_nodes);
 
