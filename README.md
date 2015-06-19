@@ -13,7 +13,7 @@ The simulator is written as a single translation unit for ease of compilation. I
 
 The simulator can be built using `make sim` (or `gcc sim.c -o sim -O3` or `clang sim.c -o sim -O3`).
 
-MSVC is not yet supported, as I don't have the the environment set up to test it. It should only require only a handful of code tweaks (for `fopen_s` and the like).
+On Windows, `sim.c` should build using the [MSVC 2015 RC](https://www.visualstudio.com/en-us/downloads/visual-studio-2015-downloads-vs.aspx) (thanks to @ras0219 for testing this!)
 
 
 ## Usage
