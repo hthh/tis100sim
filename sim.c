@@ -311,7 +311,7 @@ static int tokenize_line(char *line, struct tokens *t) {
 			return 1;
 
 		if (t->num >= TOKENS_PER_LINE) {
-			printf("error: too many tokens to parse line\n");
+			fprintf(stderr, "error: too many tokens to parse line\n");
 			return 0;
 		}
 
@@ -345,7 +345,7 @@ static int parse_line(char *line, struct prelink_line *out) {
 	int len = strlen(first);
 	if (first[len-1] == ':') {
 		if (len == 1) {
-			printf("error: empty label is invalid\n");
+			fprintf(stderr, "error: empty label is invalid\n");
 			return 0;
 		}
 		
@@ -358,13 +358,13 @@ static int parse_line(char *line, struct prelink_line *out) {
 		char *op = tokens.v[token_index++];
 		out->l.opcode = parse_opcode(op);
 		if (!out->l.opcode) {
-			printf("error: invalid opcode '%s'\n", op);
+			fprintf(stderr, "error: invalid opcode '%s'\n", op);
 			return 0;
 		}
 
 		int num_operands = op_num_arguments(out->l.opcode);
 		if (num_operands != tokens.num - token_index) {
-			printf("error: '%s' expects %d operands\n", op, num_operands);
+			fprintf(stderr, "error: '%s' expects %d operands\n", op, num_operands);
 			return 0;
 		}
 
@@ -379,7 +379,7 @@ static int parse_line(char *line, struct prelink_line *out) {
 					char *e = NULL;
 					long long v = strtoll(src, &e, 10);
 					if (*src == '+' || *e || v < INT_MIN || v > INT_MAX) {
-						printf("error: invalid operand '%s'\n", src);
+						fprintf(stderr, "error: invalid operand '%s'\n", src);
 						return 0;
 					}
 					out->l.immediate = tis100_clamp(v);
@@ -389,7 +389,7 @@ static int parse_line(char *line, struct prelink_line *out) {
 					char *dst = tokens.v[token_index];
 					out->l.dreg = parse_register(dst);
 					if (out->l.dreg == R_NONE) {
-						printf("error: invalid register '%s'\n", dst);
+						fprintf(stderr, "error: invalid register '%s'\n", dst);
 						return 0;
 					}
 				}
@@ -412,7 +412,7 @@ static int link_node(int count, struct prelink_line *line, struct user_node *nod
 		if (line[i].label[0]) {
 			for (j = 0; j < i; j++) {
 				if (!strcmp(line[i].label, line[j].label)) {
-					printf("error: duplicate label '%s'\n", line[i].label);
+					fprintf(stderr, "error: duplicate label '%s'\n", line[i].label);
 					return 0;
 				}
 			}
@@ -430,7 +430,7 @@ static int link_node(int count, struct prelink_line *line, struct user_node *nod
 				}
 			}
 			if (out[i].dreg == 0xFF) {
-				printf("error: undefined label '%s'\n", line[i].target);
+				fprintf(stderr, "error: undefined label '%s'\n", line[i].target);
 				return 0;
 			}
 		}
@@ -469,12 +469,12 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 
 		int l = e - p;
 		if (l > LINE_LENGTH) {
-			printf("error: invalid save file: line too long\n");
+			fprintf(stderr, "error: invalid save file: line too long\n");
 			return 0;
 		}
 
 		if (num_save_lines >= MAX_SAVE_LINES) {
-			printf("error: invalid save file: too many lines\n");
+			fprintf(stderr, "error: invalid save file: too many lines\n");
 			return 0;
 		}
 
@@ -489,7 +489,7 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 	}
 
 	if (num_save_lines == 0 || strcmp(lines[0], "@0")) {
-		printf("error: invalid save file: should start with '@0'\n");
+		fprintf(stderr, "error: invalid save file: should start with '@0'\n");
 		return 0;
 	}
 
@@ -506,7 +506,7 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 			node++;
 			node_line = 0;
 			if (node >= MAX_USER_NODES) {
-				printf("error: invalid save file: too many nodes\n");
+				fprintf(stderr, "error: invalid save file: too many nodes\n");
 				return 0;
 			}
 			continue;
@@ -515,7 +515,7 @@ static int load_user_nodes(char *save_data, struct user_node *user_nodes, int *c
 		if (node_line >= LINES_PER_NODE) {
 			if (!lines[n][0])
 				continue;
-			printf("error: invalid save file: too many lines in node\n");
+			fprintf(stderr, "error: invalid save file: too many lines in node\n");
 			return 0;
 		}
 
@@ -952,14 +952,14 @@ static int load_user_nodes_filename(const char *filename, struct arena *arena) {
 
 	FILE *f = fopen(filename, "rb");
 	if (!f) {
-		printf("error: could not open save file '%s'\n", filename);
+		fprintf(stderr, "error: could not open save file '%s'\n", filename);
 		return 0;
 	}
 	int size = fread(save_data, 1, sizeof save_data - 1, f);
 	save_data[size] = '\0';
 
 	if (size == sizeof save_data - 1) {
-		printf("error: invalid save file: too large\n");
+		fprintf(stderr, "error: invalid save file: too large\n");
 		return 0;
 	}
 	if (!load_user_nodes(save_data, arena->user_nodes, &arena->user_node_count))
@@ -988,7 +988,7 @@ static int arena_set_layout(struct arena *arena, int *layout) {
 
 			case N_USER: {
 				if (user_node_index >= arena->user_node_count) {
-					printf("error: not enough nodes in save file\n");
+					fprintf(stderr, "error: not enough nodes in save file\n");
 					return 0;
 				}
 				struct user_node *n = &arena->user_nodes[user_node_index++];
@@ -1016,7 +1016,7 @@ static int arena_set_layout(struct arena *arena, int *layout) {
 	}
 
 	if (user_node_index != arena->user_node_count) {
-		printf("error: too many nodes in save file\n");
+		fprintf(stderr, "error: too many nodes in save file\n");
 		return 0;
 	}
 
@@ -1032,7 +1032,7 @@ static int arena_set_layout(struct arena *arena, int *layout) {
 
 int main(int argc, char **argv) {
 	if (argc != 2 && argc != 3) {
-		printf(USAGE);
+		fprintf(stderr, USAGE);
 		return -1;
 	}
 	char *path = argv[1];
@@ -1062,7 +1062,7 @@ int main(int argc, char **argv) {
 #include "puzzles/all.inc"
 
 		default: {
-			printf(USAGE);
+			fprintf(stderr, USAGE);
 			return -1;
 		} break;
 	}
@@ -1076,7 +1076,7 @@ int main(int argc, char **argv) {
 #ifdef SINGLE_STEP
 		printf("\n%d: \n", cycle);
 		dump_arena(arena.nodes);
-		printf("single-step: press enter...\n");
+		fprintf(stderr, "single-step: press enter...\n");
 		getchar();
 #endif
 
