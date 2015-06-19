@@ -300,7 +300,7 @@ static int is_tis100_terminator(char c) {
 // tokenizing
 
 static int tokenize_line(char *line, struct tokens *t) {
-	char *p = line;
+	char *p = line, *e;
 	char *o;
 
 	assert(strlen(line) <= LINE_LENGTH);
@@ -308,6 +308,21 @@ static int tokenize_line(char *line, struct tokens *t) {
 	t->num = 0;
 
 	// skip leading whitespace
+	while (*p == ' ' || *p == '!')
+		p++;
+
+	// this handles labels. it is separate from the loop because labels can
+	// contain commas. (such labels are useless, but can exist in valid code)
+	for (e = p; *e != ' ' && *e != '!' && !is_tis100_terminator(*e);) {
+		if (*e++ == ':') {
+			o = t->v[t->num++];
+			memcpy(o, p, e-p);
+			o[e-p] = '\0';
+			p = e;
+			break;
+		}
+	}
+
 	while (!is_tis100_terminator(*p)) {
 		while (is_tis100_separator(*p))
 			p++;
@@ -321,11 +336,8 @@ static int tokenize_line(char *line, struct tokens *t) {
 		}
 
 		o = t->v[t->num++];
-		while (!is_tis100_terminator(*p) && !is_tis100_separator(*p)) {
-			*o++ = *p;
-			if (*p++ == ':' && t->num == 1)
-				break;
-		}
+		while (!is_tis100_terminator(*p) && !is_tis100_separator(*p))
+			*o++ = *p++;
 		*o++ = '\0';
 	}
 
