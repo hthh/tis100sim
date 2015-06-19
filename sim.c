@@ -50,8 +50,8 @@
 #define OUTPUT_OUT_NODES  /* display output values */
 
 enum opcode_numbers {
-	OP_NONE = 0, OP_NOP, OP_SWP, OP_SAV, OP_NEG, OP_ADD, OP_SUB, OP_JRO,
-	OP_MOV, OP_JMP, OP_JNZ, OP_JEZ, OP_JGZ, OP_JLZ,
+	OP_NONE = 0, OP_NOP, OP_SWP, OP_SAV, OP_HCF, OP_NEG, OP_ADD, OP_SUB,
+	OP_JRO, OP_MOV, OP_JMP, OP_JNZ, OP_JEZ, OP_JGZ, OP_JLZ,
 };
 
 enum register_numbers {
@@ -222,6 +222,7 @@ static int parse_opcode(char *name) {
 		case 0x504F4E: return OP_NOP;
 		case 0x505753: return OP_SWP;
 		case 0x564153: return OP_SAV;
+		case 0x464348: return OP_HCF;
 		case 0x47454E: return OP_NEG;
 		case 0x444441: return OP_ADD;
 		case 0x425553: return OP_SUB;
@@ -242,6 +243,7 @@ static char *get_op_name(int opcode) {
 		case OP_NOP:  return "NOP";
 		case OP_SWP:  return "SWP";
 		case OP_SAV:  return "SAV";
+		case OP_HCF:  return "HCF";
 		case OP_NEG:  return "NEG";
 		case OP_ADD:  return "ADD";
 		case OP_SUB:  return "SUB";
@@ -660,6 +662,7 @@ static void user_node_step(struct user_node *n, int step) {
 			case OP_SUB: n->acc = tis100_clamp(n->acc - src_value); break;
 			case OP_SAV: n->bak = n->acc; break;
 			case OP_NEG: n->acc = -n->acc; break;
+			case OP_HCF: abort(); break;
 			case OP_NOP: break;
 
 			case OP_SWP: {
