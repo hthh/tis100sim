@@ -96,6 +96,7 @@ struct line {
 
 struct prelink_line {
 	struct line l;
+	int postlink_label_index;
 	char label[LINE_LENGTH];
 	char target[LINE_LENGTH];
 };
@@ -117,8 +118,8 @@ struct user_node {
 	int acc;
 	int bak;
 	uint8 ip;
-	uint8 empty;
 	uint8 last;
+	uint8 length;
 };
 
 struct in_node {
@@ -276,10 +277,14 @@ static char *get_reg_name(int r) {
 
 // utils
 
-static short tis100_clamp(int v) {
-	if (v >  999) return  999;
-	if (v < -999) return -999;
+static int clamp(int min, int v, int max) {
+	if (v < min) return min;
+	if (v > max) return max;
 	return v;
+}
+
+static short tis100_clamp(int v) {
+	return clamp(-999, v, 999);
 }
 
 static int is_tis100_separator(char c) {
@@ -405,7 +410,7 @@ static int parse_line(char *line, struct prelink_line *out) {
 
 static int link_node(int count, struct prelink_line *line, struct user_node *node) {
 	struct line *out = node->lines;
-	int i, j;
+	int i, j, k;
 
 	// quadratic time techniques because n < 16
 	for (i = 1; i < count; i++) {
@@ -419,29 +424,31 @@ static int link_node(int count, struct prelink_line *line, struct user_node *nod
 		}
 	}
 
-	for (i = 0; i < count; i++) {
-		out[i] = line[i].l;
-		if (line[i].target[0]) {
-			out[i].dreg = 0xFF;
-			for (j = 0; j < count; j++) {
-				if (!strcmp(line[i].target, line[j].label)) {
-					out[i].dreg = j;
-					break;
+	// work out final label addresses and final node length
+	for (i = 0, j = 0; i < count; i++) {
+		if (line[i].label[0])
+			line[i].postlink_label_index = j;
+		if (line[i].l.opcode)
+			j++;
+	}
+	node->length = j;
+
+	for (i = 0, j = 0; i < count; i++) {
+		if (line[i].l.opcode) {
+			if (line[i].target[0]) {
+				line[i].l.dreg = 0xFF;
+				for (k = 0; k < count; k++) {
+					if (!strcmp(line[i].target, line[k].label)) {
+						line[i].l.dreg = line[k].postlink_label_index % node->length;
+						break;
+					}
+				}
+				if (line[i].l.dreg == 0xFF) {
+					fprintf(stderr, "error: undefined label '%s'\n", line[i].target);
+					return 0;
 				}
 			}
-			if (out[i].dreg == 0xFF) {
-				fprintf(stderr, "error: undefined label '%s'\n", line[i].target);
-				return 0;
-			}
-		}
-	}
-
-	node->empty = 1;
-	for (i = 0; i < count; i++) {
-		if (out[i].opcode) {
-			node->ip = i;
-			node->empty = 0;
-			break;
+			out[j++] = line[i].l;
 		}
 	}
 
@@ -561,6 +568,12 @@ static void link_arena(struct base_node **arena) {
 	}
 }
 
+static void node_write(struct base_node *n, int direction_bits, int value) {
+	n->write_state = WS_WILL_BE_READABLE;
+	n->write_bits = direction_bits;
+	n->write_value = value;
+}
+
 static int node_read_from_direction(struct base_node *n, int direction, int *value) {
 	struct base_node *other = n->neighbors[direction];
 
@@ -613,21 +626,9 @@ static int user_node_do_read_from_register(struct user_node *n, int reg, int *va
 }
 
 static void user_node_next_instruction(struct user_node *n) {
-	do {
-		n->ip++;
-
-		if (n->ip >= LINES_PER_NODE)
-			n->ip = 0;
-	} while (n->lines[n->ip].opcode == OP_NONE);
-}
-
-static void user_node_prev_instruction(struct user_node *n) {
-	do {
-		n->ip--;
-
-		if (n->ip < 0)
-			n->ip = LINES_PER_NODE;
-	} while (n->lines[n->ip].opcode == OP_NONE);
+	n->ip++;
+	if (n->ip == n->length)
+		n->ip = 0;
 }
 
 static void user_node_step(struct user_node *n, int step) {
@@ -641,9 +642,6 @@ static void user_node_step(struct user_node *n, int step) {
 	} else if (step == S_RUN) {
 		if (n->b.write_state != WS_RUNNING)
 			return; // nothing to do - another node will need to unblock this one
-
-		if (n->lines[n->ip].opcode == OP_NONE)
-			user_node_next_instruction(n); // should only happen at start-up
 
 		int src_value = 0;
 		struct line *l = &n->lines[n->ip];
@@ -678,47 +676,28 @@ static void user_node_step(struct user_node *n, int step) {
 			case OP_JLZ: branch = (n->acc  < 0); break;
 
 			case OP_JRO: {
-				int old_ip, i;
-				// emulate weird bounding behaviour
-				if (src_value < 0) {
-					for (i = 0; i > src_value; i--) {
-						old_ip = n->ip;
-						user_node_prev_instruction(n);
-						if (n->ip > old_ip) {
-							n->ip = old_ip;
-							return;
-						}
-					}
-				} else {
-					for (i = 0; i < src_value; i++) {
-						old_ip = n->ip;
-						user_node_next_instruction(n);
-						if (n->ip < old_ip) {
-							n->ip = old_ip;
-							return;
-						}
-					}
-				}
+				n->ip = clamp(0, n->ip + src_value, n->length - 1);
 				return; // do not advance
 			} break;
 
 			case OP_MOV: {
-				n->b.write_bits = 0;
 				switch (l->dreg) {
 					case R_LEFT:
 					case R_RIGHT:
 					case R_UP:
 					case R_DOWN:
-						n->b.write_bits = 1 << register_to_direction(l->dreg);
-						break;
+						node_write(&n->b, 1 << register_to_direction(l->dreg), src_value);
+						return; // do not advance
 
 					case R_ANY:
-						n->b.write_bits = 0x0F;
-						break;
+						node_write(&n->b, 0x0F, src_value);
+						return; // do not advance
 
 					case R_LAST:
-						if (n->last)
-							n->b.write_bits = 1 << (n->last - 1);
+						if (n->last) {
+							node_write(&n->b, 1 << (n->last - 1), src_value);
+							return; // do not advance
+						}
 						break;
 
 					case R_ACC:
@@ -730,27 +709,16 @@ static void user_node_step(struct user_node *n, int step) {
 
 					default: assert(0);
 				}
-
-				if (n->b.write_bits) {
-					n->b.write_state = WS_WILL_BE_READABLE;
-					n->b.write_value = src_value;
-					return; // do not increment
-				}
 			} break;
 
 			default: assert(0);
 		}
 
 		// JRO deals with its own problems
-		if (branch) {
+		if (branch)
 			n->ip = l->dreg;
-			if (n->lines[n->ip].opcode == OP_NONE)
-				user_node_next_instruction(n);
-			return;
-		}
-
-		// increment
-		user_node_next_instruction(n);
+		else
+			user_node_next_instruction(n);
 	}
 }
 
@@ -764,12 +732,8 @@ static void in_node_step(struct in_node *n, int step) {
 		else if (n->b.write_state == WS_WILL_BE_RUNNING)
 			n->b.write_state = WS_RUNNING;
 	} else if (step == S_RUN) {
-		if (n->b.write_state != WS_RUNNING || n->i >= n->num_values)
-			return; // nothing to do
-
-		n->b.write_state = WS_WILL_BE_READABLE;
-		n->b.write_value = n->values[n->i++];
-		n->b.write_bits = 0x0F;
+		if (n->b.write_state == WS_RUNNING && n->i < n->num_values)
+			node_write(&n->b, 0x0F, n->values[n->i++]);
 	}
 }
 
@@ -781,11 +745,11 @@ static void out_node_step(struct out_node *n, int step) {
 
 	if (step == S_RUN && n->i < n->num_values && node_read_from_direction(&n->b, D_UP, &value)) {
 		expected = n->values[n->i++];
-		if (expected == value) {
-			if (n->i == n->num_values)
-				n->arena->completed++;
-		} else
+		if (expected != value)
 			n->arena->error = 1;
+		else if (n->i == n->num_values)
+			n->arena->completed++;
+
 #ifdef OUTPUT_OUT_NODES
 		if (n->output_prefix)
 			printf("%s: ", n->output_prefix);
@@ -928,7 +892,7 @@ static void dump_arena(struct base_node **arena) {
 				} else {
 					if (n && n->type == N_USER) {
 						struct user_node *un = (struct user_node *) n;
-						if (!un->empty && un->ip == i)
+						if (un->length != 0 && un->ip == i)
 							c = (n->write_state == WS_READABLE ? '*' : '>');
 						if (un->lines[i].opcode) {
 							sdump_line(&un->lines[i], buffer);
@@ -995,7 +959,7 @@ static int arena_set_layout(struct arena *arena, int *layout) {
 
 				// an empty node is equivalent to a "none" node, but much
 				// more expensive to simulate
-				if (!n->empty)
+				if (n->length != 0)
 					arena->nodes[i] = &n->b;
 			} break;
 
@@ -1083,7 +1047,7 @@ int main(int argc, char **argv) {
 		// simulate all nodes
 		for (stage = 0; stage < 2; stage++) {
 			for (i = 0; i < arena.user_node_count; i++)
-				if (!arena.user_nodes[i].empty)
+				if (arena.user_nodes[i].length != 0)
 					user_node_step(&arena.user_nodes[i], stage);
 
 			for (i = 0; i < arena.in_node_count; i++)
@@ -1106,7 +1070,7 @@ int main(int argc, char **argv) {
 	} else if (arena.completed == required) {
 		int nodes = 0, instructions = 0;
 		for (i = 0; i < arena.user_node_count; i++) {
-			if (!arena.user_nodes[i].empty) {
+			if (arena.user_nodes[i].length != 0) {
 				nodes++;
 				for (j = 0; j < LINES_PER_NODE; j++)
 					if (arena.user_nodes[i].lines[j].opcode != OP_NONE)
